@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>유광 포토카드</title>
+<title>와 이거 진짜 같다</title>
 <style>
 html,body{margin:0;height:100%;background:#2c4019;overflow:hidden}
 .stage{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
@@ -371,7 +371,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
   // ---------- interaction: stays where you leave it
   const REST = { rx: 10, ry: -16 };
-  let rx = REST.rx, ry = REST.ry, scale = 1, anim = null, panX = 0, panY = 0;
+  let rx = REST.rx, ry = REST.ry, rz = 0, scale = 1, anim = null, panX = 0, panY = 0;
   const pointers = new Map(); let drag = null, pinch = null;
   const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
   const norm = a => ((a % 360) + 360) % 360;
@@ -396,7 +396,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       drag = { x: e.clientX, y: e.clientY, rx, ry, t: performance.now(), moved: 0, onCard: hitsCard(e) };
     } else if(pointers.size === 2){
       const [a,b] = pair();
-      pinch = { d: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)), s: scale, mx: (a.x+b.x)/2, my: (a.y+b.y)/2, px: panX, py: panY }; drag = null;
+      pinch = { d: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)), s: scale, mx: (a.x+b.x)/2, my: (a.y+b.y)/2, px: panX, py: panY, ang: Math.atan2(b.y-a.y, b.x-a.x) }; drag = null;
     }
   });
   stage.addEventListener('pointermove', e => {
@@ -409,6 +409,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       const upp = 2*camera.position.z*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)) / stage.clientHeight;
       panX = pinch.px + ((a.x+b.x)/2 - pinch.mx)*upp;
       panY = pinch.py - ((a.y+b.y)/2 - pinch.my)*upp;
+      // two-finger twist: turning the fingers spins the card in its own plane
+      const ang = Math.atan2(b.y-a.y, b.x-a.x);
+      let da = ang - pinch.ang; da = Math.atan2(Math.sin(da), Math.cos(da));
+      pinch.ang = ang; rz -= da*180/Math.PI;
       return;
     }
     if(drag){
@@ -494,7 +498,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       ry = anim.fy + (anim.ty-anim.fy)*k; rx = anim.fx + (anim.tx-anim.fx)*k;
       if(p >= 1) anim = null;
     }
-    card.rotation.set(D(rx), D(ry), 0, 'XYZ');
+    card.rotation.set(D(rx), D(ry), D(rz), 'XYZ');
     card.scale.setScalar(scale);
     card.position.set(panX, panY, 0);
     physics();
