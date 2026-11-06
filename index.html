@@ -5,17 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>유광 포토카드</title>
 <style>
-html,body{margin:0;height:100%;background:#1e120c;overflow:hidden}
-body{background-image:radial-gradient(ellipse 85% 65% at 45% 35%,#4a3022 0%,#1e120c 100%)}
+html,body{margin:0;height:100%;background:#2c4019;overflow:hidden}
 .stage{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#lawn{position:absolute;top:-40px;left:-40px;width:calc(100% + 80px);height:calc(100% + 80px);object-fit:cover;filter:blur(10px) saturate(1.05);pointer-events:none}
+.stage.live #lawn{display:none}
 .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none}
 .stage.live video{display:block}
-.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
+.stage canvas.gl{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
 input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+.consent{position:fixed;inset:0;z-index:10;display:flex;align-items:flex-end;justify-content:center;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));background:rgba(0,0,0,.28);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.consent[hidden]{display:none}
+.sheet{width:100%;max-width:380px;border-radius:22px;padding:22px 20px 16px;background:rgba(28,30,24,.9);color:#f4efe6;
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;box-shadow:0 20px 50px rgba(0,0,0,.4)}
+.sheet .t{margin:0 0 8px;font-size:1.05rem;font-weight:700}
+.sheet .d{margin:0 0 18px;font-size:.92rem;line-height:1.55;color:#d9d2c4;word-break:keep-all}
+.sheet .b{display:flex;gap:10px}
+.sheet button{flex:1;min-height:46px;border-radius:14px;border:0;font:inherit;font-weight:600;font-size:.95rem;cursor:pointer}
+.sheet .no{background:rgba(255,255,255,.1);color:#f4efe6}
+.sheet .yes{background:#f4efe6;color:#1c1e18}
+.sheet button:focus-visible{outline:2px solid #f4efe6;outline-offset:2px}
 </style>
 </head>
 <body>
-<main class="stage" id="stage"><video id="cam" playsinline muted></video></main>
+<main class="stage" id="stage"><canvas id="lawn" aria-hidden="true"></canvas><video id="cam" playsinline muted></video></main>
+
+<div class="consent" id="consent" role="dialog" aria-modal="true" aria-labelledby="consentT" hidden>
+  <div class="sheet">
+    <p class="t" id="consentT"></p>
+    <p class="d" id="consentD"></p>
+    <div class="b"><button class="no" id="camNo" type="button"></button><button class="yes" id="camYes" type="button">카메라 켜기</button></div>
+  </div>
+</div>
 
 <input type="file" id="frontInput" accept="image/*" aria-label="앞면 사진">
 <input type="file" id="backInput" accept="image/*" aria-label="뒷면 사진">
@@ -36,6 +58,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.NoToneMapping;
   renderer.physicallyCorrectLights = true;
+  renderer.domElement.className = 'gl';
   renderer.domElement.tabIndex = 0;
   renderer.domElement.setAttribute('role', 'button');
   renderer.domElement.setAttribute('aria-label', '포토카드. 드래그로 기울이고 탭하거나 Enter로 뒤집기');
@@ -65,6 +88,41 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     if(envRT) envRT.dispose();
     envRT = rt;
   }
+  // ---------- default background: a blurred lawn, drawn here (no photo, no copyright)
+  function drawLawn(c){
+    const w = c.width = 720, h = c.height = 1280, ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0,0,0,h);
+    g.addColorStop(0,'#8aa556'); g.addColorStop(0.35,'#5d7f32'); g.addColorStop(1,'#25401a');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+    const blades = [];
+    for(let i=0;i<14000;i++) blades.push({ x: Math.random()*w, y: Math.random()*h*1.05 });
+    blades.sort((a,b) => a.y-b.y);
+    ctx.lineCap = 'round';
+    for(const b of blades){
+      const near = b.y/h, len = 6 + near*46, lean = (Math.random()-0.5)*len*0.7;
+      const hue = 72 + Math.random()*32, light = 18 + Math.random()*22 + (1-near)*16;
+      ctx.strokeStyle = `hsl(${hue},${42+Math.random()*20}%,${light}%)`;
+      ctx.lineWidth = 0.6 + near*2.4*Math.random() + 0.4;
+      ctx.beginPath(); ctx.moveTo(b.x, b.y);
+      ctx.quadraticCurveTo(b.x + lean*0.3, b.y - len*0.6, b.x + lean, b.y - len); ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for(let i=0;i<26;i++){
+      const x = Math.random()*w, y = Math.random()*h*0.55, r = 30 + Math.random()*90;
+      const rg = ctx.createRadialGradient(x,y,0,x,y,r);
+      rg.addColorStop(0,'rgba(255,246,200,.16)'); rg.addColorStop(1,'rgba(255,246,200,0)');
+      ctx.fillStyle = rg; ctx.fillRect(x-r,y-r,2*r,2*r);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    return c;
+  }
+  const lawnCanvas = drawLawn(document.getElementById('lawn'));
+  const lawnTex = new THREE.CanvasTexture(lawnCanvas); lawnTex.encoding = THREE.sRGBEncoding;
+  // whatever is behind the card (lawn, or the live camera) is also what the gloss faintly reflects
+  const reflMat = new THREE.MeshBasicMaterial({ map: lawnTex, side: THREE.DoubleSide });
+  reflMat.color.setScalar(2.2);
+  const reflPlane = new THREE.Mesh(new THREE.PlaneGeometry(26, 18), reflMat);
+  reflPlane.position.set(0, 0, 13); reflPlane.lookAt(0, 0, 0); env.add(reflPlane);
   rebuildEnv();
 
   // ---------- orange-peel laminate normal map (tileable)
@@ -208,33 +266,32 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   // ---------- face artwork (canvas)
   const CW = 1100, CH = 1700;
   function newCanvas(){ const c = document.createElement('canvas'); c.width = CW; c.height = CH; return c; }
-  function rings(ctx, bg1, bg2){
-    const g = ctx.createRadialGradient(CW/2,CH/2,0,CW/2,CH/2,CH*.6);
-    g.addColorStop(0,bg1); g.addColorStop(1,bg2); ctx.fillStyle = g; ctx.fillRect(0,0,CW,CH);
-    ctx.strokeStyle = 'rgba(214,178,94,.16)'; ctx.lineWidth = 2;
-    for(let r=20;r<CH;r+=22){ ctx.beginPath(); ctx.arc(CW/2,CH/2,r,0,Math.PI*2); ctx.stroke(); }
-  }
-  function drawPlaceholder(){
+  // empty face: plain paper (soft mottling, fibres, fine grain) with a thin plus in the middle
+  function drawPaper(){
     const c = newCanvas(), ctx = c.getContext('2d');
-    rings(ctx,'#3b2b5e','#120d22');
-    ctx.strokeStyle = 'rgba(214,178,94,.8)'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(CW/2,CH/2,120,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#e8cf8e'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = '300 150px sans-serif'; ctx.fillText('+',CW/2,CH/2-6);
+    ctx.fillStyle = '#f1ede4'; ctx.fillRect(0,0,CW,CH);
+    for(let i=0;i<260;i++){
+      const x = Math.random()*CW, y = Math.random()*CH, r = 40 + Math.random()*180;
+      const dark = Math.random() < 0.5;
+      const rg = ctx.createRadialGradient(x,y,0,x,y,r);
+      rg.addColorStop(0, dark ? 'rgba(150,130,100,.05)' : 'rgba(255,255,250,.07)');
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = rg; ctx.fillRect(x-r,y-r,2*r,2*r);
+    }
+    ctx.lineCap = 'round';
+    for(let i=0;i<2600;i++){
+      const x = Math.random()*CW, y = Math.random()*CH, a = Math.random()*Math.PI, l = 4 + Math.random()*16;
+      ctx.strokeStyle = `rgba(${110+Math.random()*40},${95+Math.random()*30},${70+Math.random()*25},${0.04+Math.random()*0.08})`;
+      ctx.lineWidth = 0.6 + Math.random()*0.9;
+      ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+Math.cos(a)*l, y+Math.sin(a)*l); ctx.stroke();
+    }
+    const img = ctx.getImageData(0,0,CW,CH), d = img.data;
+    for(let i=0;i<d.length;i+=4){ const n = (Math.random()-0.5)*10; d[i]+=n; d[i+1]+=n; d[i+2]+=n; }
+    ctx.putImageData(img,0,0);
+    ctx.strokeStyle = 'rgba(95,84,68,.55)'; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.moveTo(CW/2-70,CH/2); ctx.lineTo(CW/2+70,CH/2); ctx.moveTo(CW/2,CH/2-70); ctx.lineTo(CW/2,CH/2+70); ctx.stroke();
     return c;
   }
-  function drawBack(){
-    const c = newCanvas(), ctx = c.getContext('2d');
-    rings(ctx,'#2a2048','#100b1e');
-    ctx.strokeStyle = 'rgba(214,178,94,.6)'; ctx.lineWidth = 4;
-    roundRect(ctx,60,60,CW-120,CH-120,40); ctx.stroke();
-    ctx.strokeStyle = 'rgba(214,178,94,.28)'; ctx.lineWidth = 3;
-    roundRect(ctx,84,84,CW-168,CH-168,28); ctx.stroke();
-    ctx.strokeStyle = '#d6b25e'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(CW/2,CH/2,260,0,Math.PI*2); ctx.stroke();
-    return c;
-  }
-  function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
   function drawCover(img){
     const c = newCanvas(), ctx = c.getContext('2d');
     const s = Math.max(CW/img.naturalWidth, CH/img.naturalHeight);
@@ -250,8 +307,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
 
   let hasFront = false, hasBack = false;
   function paintDefaults(){
-    if(!hasFront) setFace(frontMat, drawPlaceholder());
-    if(!hasBack) setFace(backMat, drawBack());
+    if(!hasFront) setFace(frontMat, drawPaper());
+    if(!hasBack) setFace(backMat, drawPaper());
   }
   paintDefaults();
 
@@ -273,27 +330,44 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   ['dragleave','drop'].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.remove('dragover'); }));
   stage.addEventListener('drop', e => loadFile(e.dataTransfer.files[0], showingBack() ? 'back' : 'front'));
 
-  // ---------- live camera: starts on open, sits behind the card and is reflected in the gloss
+  // ---------- camera: tap the background, read the note, then the browser asks for permission
   const camVideo = document.getElementById('cam');
-  let camTex = null, camPlane = null, envTick = 0;
-  async function startCam(){
+  const consent = document.getElementById('consent'), consentT = document.getElementById('consentT'), consentD = document.getElementById('consentD');
+  const camYes = document.getElementById('camYes'), camNo = document.getElementById('camNo');
+  let camTex = null, envTick = 0;
+  function openConsent(){
+    consentT.textContent = '카메라를 배경으로 쓸까요?';
+    consentD.textContent = '카메라 화면은 어디에도 전송되거나 저장되지 않아요. 지금 이 브라우저 안에서만 보이고, 창을 닫으면 사라져요.';
+    camYes.hidden = false; camNo.textContent = '취소';
+    consent.hidden = false; camYes.focus();
+  }
+  function consentError(text){
+    consentT.textContent = '카메라를 켤 수 없어요';
+    consentD.textContent = text;
+    camYes.hidden = true; camNo.textContent = '닫기'; camNo.focus();
+  }
+  camNo.addEventListener('click', () => { consent.hidden = true; });
+  camYes.addEventListener('click', async () => {
+    if(!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      consentError('카메라는 https 주소로 연 페이지에서만 쓸 수 있어요.'); return;
+    }
     let stream;
     try {
-      if(!window.isSecureContext || !navigator.mediaDevices) return;
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-    } catch(err){ return; }
+    } catch(err){
+      consentError(err && err.name === 'NotAllowedError'
+        ? '카메라 권한이 거부됐어요. Safari 주소창 왼쪽 메뉴의 웹사이트 설정에서 카메라를 허용한 뒤 새로고침해 주세요.'
+        : '이 기기에서 카메라를 찾을 수 없어요.');
+      return;
+    }
+    consent.hidden = true;
     camVideo.srcObject = stream;
     try { await camVideo.play(); } catch(e){}
     stage.classList.add('live');
     camTex = new THREE.VideoTexture(camVideo); camTex.encoding = THREE.sRGBEncoding;
-    const m = new THREE.MeshBasicMaterial({ map: camTex, side: THREE.DoubleSide });
-    m.color.setScalar(2.5);
-    camPlane = new THREE.Mesh(new THREE.PlaneGeometry(26, 18), m);
-    camPlane.position.set(0, 0, 13); camPlane.lookAt(0, 0, 0);
-    env.add(camPlane);
+    reflMat.map = camTex; reflMat.needsUpdate = true;
     rebuildEnv();
-  }
-  startCam();
+  });
 
   // ---------- interaction: stays where you leave it
   const REST = { rx: 10, ry: -16 };
@@ -353,9 +427,14 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     }
     if(drag && pointers.size === 0){
       const held = performance.now() - drag.t;
-      if(drag.onCard && drag.moved < 6){
-        if(held >= 550) (showingBack() ? backInput : frontInput).click();
-        else if(held < 260){ if(!hasFront && !showingBack()) frontInput.click(); else flip(1); }
+      if(drag.moved < 6){
+        if(drag.onCard){
+          const back = showingBack(), input = back ? backInput : frontInput, filled = back ? hasBack : hasFront;
+          if(held >= 550) input.click();
+          else if(held < 260){ if(!filled) input.click(); else flip(1); }
+        } else if(held < 400 && !camTex){
+          openConsent();
+        }
       }
       drag = null;
     }
