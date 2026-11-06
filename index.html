@@ -316,8 +316,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     if(!file || !file.type.startsWith('image/')) return;
     const url = URL.createObjectURL(file), img = new Image();
     img.onload = () => {
-      if(which === 'front'){ setFace(frontMat, drawCover(img)); hasFront = true; flipTo(Math.round(ry/360)*360); }
-      else { setFace(backMat, drawCover(img)); hasBack = true; flipTo(Math.round((ry-180)/360)*360+180); }
+      if(which === 'front'){ setFace(frontMat, drawCover(img)); hasFront = true; if(showingBack()) flip(1); }
+      else { setFace(backMat, drawCover(img)); hasBack = true; if(!showingBack()) flip(1); }
       URL.revokeObjectURL(url);
     };
     img.src = url;
@@ -370,14 +370,22 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   });
 
   // ---------- interaction: stays where you leave it
-  const REST = { rx: 10, ry: -16 };
-  let rx = REST.rx, ry = REST.ry, rz = 0, scale = 1, anim = null, panX = 0, panY = 0;
+  // orientation lives in one quaternion and every gesture turns it around the screen's axes,
+  // so dragging and twisting move the same way whichever side of the card faces you
+  const D = THREE.MathUtils.degToRad;
+  const Q = new THREE.Quaternion().setFromEuler(new THREE.Euler(D(10), D(-16), 0, 'XYZ'));
+  const AX = new THREE.Vector3(1,0,0), AY = new THREE.Vector3(0,1,0), AZ = new THREE.Vector3(0,0,1);
+  const tq = new THREE.Quaternion(), tv = new THREE.Vector3();
+  function turn(axis, deg){ tq.setFromAxisAngle(axis, D(deg)); Q.premultiply(tq).normalize(); }
+  let scale = 1, anim = null, panX = 0, panY = 0;
   const pointers = new Map(); let drag = null, pinch = null;
   const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
-  const norm = a => ((a % 360) + 360) % 360;
-  function showingBack(){ const f = norm(ry); return f > 90 && f < 270; }
-  function flipTo(toRy, toRx){ anim = { fy: ry, ty: toRy, fx: rx, tx: toRx === undefined ? rx : toRx, t0: performance.now(), dur: reduce ? 0 : 600 }; }
-  function flip(dir){ flipTo((anim ? anim.ty : ry) + 180*dir); }
+  function showingBack(){ return tv.set(0,0,1).applyQuaternion(Q).z < 0; }
+  function flip(dir){
+    if(anim) Q.copy(anim.end);
+    const q0 = Q.clone(), end = new THREE.Quaternion().setFromAxisAngle(AY, Math.PI*dir).multiply(q0);
+    anim = { q0, end, dir, t0: performance.now(), dur: reduce ? 0 : 600 };
+  }
   const pair = () => [...pointers.values()];
 
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -393,7 +401,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     anim = null;
     if(pointers.size === 1){
-      drag = { x: e.clientX, y: e.clientY, rx, ry, t: performance.now(), moved: 0, onCard: hitsCard(e) };
+      drag = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), moved: 0, onCard: hitsCard(e) };
     } else if(pointers.size === 2){
       const [a,b] = pair();
       pinch = { d: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)), s: scale, mx: (a.x+b.x)/2, my: (a.y+b.y)/2, px: panX, py: panY, ang: Math.atan2(b.y-a.y, b.x-a.x) }; drag = null;
@@ -412,21 +420,22 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       // two-finger twist: turning the fingers spins the card in its own plane
       const ang = Math.atan2(b.y-a.y, b.x-a.x);
       let da = ang - pinch.ang; da = Math.atan2(Math.sin(da), Math.cos(da));
-      pinch.ang = ang; rz -= da*180/Math.PI;
+      pinch.ang = ang; turn(AZ, -da*180/Math.PI);
       return;
     }
     if(drag){
       const dx = e.clientX-drag.x, dy = e.clientY-drag.y;
       drag.moved = Math.max(drag.moved, Math.hypot(dx,dy));
-      ry = drag.ry + dx*0.5;
-      rx = clamp(drag.rx + dy*0.35, -75, 75);
+      turn(AY, (e.clientX-drag.lx)*0.5);
+      turn(AX, (e.clientY-drag.ly)*0.35);
+      drag.lx = e.clientX; drag.ly = e.clientY;
     }
   });
   function up(e){
     if(!pointers.has(e.pointerId)) return;
     pointers.delete(e.pointerId);
     if(pinch){
-      if(pointers.size < 2){ pinch = null; if(pointers.size === 1){ const [p] = pair(); drag = { x:p.x, y:p.y, rx, ry, t:0, moved:99, onCard:false }; } }
+      if(pointers.size < 2){ pinch = null; if(pointers.size === 1){ const [p] = pair(); drag = { x:p.x, y:p.y, lx:p.x, ly:p.y, t:0, moved:99, onCard:false }; } }
       return;
     }
     if(drag && pointers.size === 0){
@@ -466,20 +475,24 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   }
   new ResizeObserver(resize).observe(stage); resize();
 
-  const D = THREE.MathUtils.degToRad;
-
   // ---------- flex physics: gravity sags the card, fast turns make it lag and wobble
   const G = new THREE.Vector3(0, -0.35, -1).normalize(); // looking down at the card, like on a table
   const K = 220, C = 11, SAG = 0.075, LAG = 0.05;
   const bb = [0,0,0,0], bv = [0,0,0,0];
   const qInv = new THREE.Quaternion(), gL = new THREE.Vector3();
-  let lastT = performance.now(), prx = rx, pry = ry, wx = 0, wy = 0;
+  let lastT = performance.now(), wx = 0, wy = 0;
+  const prevQ = Q.clone(), dq = new THREE.Quaternion(), wv = new THREE.Vector3();
   function physics(){
     const now = performance.now();
     const dt = Math.min(0.033, Math.max(0.001, (now-lastT)/1000)); lastT = now;
     const owx = wx, owy = wy;
-    wx += (D(rx-prx)/dt - wx)*0.3; wy += (D(ry-pry)/dt - wy)*0.3;
-    prx = rx; pry = ry;
+    // spin rate in the card's own frame, from how far its orientation moved since last frame
+    dq.copy(prevQ).invert().multiply(card.quaternion);
+    if(dq.w < 0){ dq.x = -dq.x; dq.y = -dq.y; dq.z = -dq.z; dq.w = -dq.w; }
+    const turned = 2*Math.acos(Math.min(1, dq.w)), sn = Math.sqrt(Math.max(0, 1 - dq.w*dq.w));
+    if(sn > 1e-6) wv.set(dq.x, dq.y, dq.z).multiplyScalar(turned/sn/dt); else wv.set(0,0,0);
+    prevQ.copy(card.quaternion);
+    wx += (wv.x - wx)*0.3; wy += (wv.y - wy)*0.3;
     const ax = reduce ? 0 : clamp((wx-owx)/dt, -2500, 2500);
     const ay = reduce ? 0 : clamp((wy-owy)/dt, -2500, 2500);
     qInv.copy(card.quaternion).invert(); gL.copy(G).applyQuaternion(qInv);
@@ -495,10 +508,10 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     if(anim){
       const p = anim.dur ? clamp((performance.now()-anim.t0)/anim.dur, 0, 1) : 1;
       const k = 1 - Math.pow(1-p, 3);
-      ry = anim.fy + (anim.ty-anim.fy)*k; rx = anim.fx + (anim.tx-anim.fx)*k;
-      if(p >= 1) anim = null;
+      tq.setFromAxisAngle(AY, Math.PI*anim.dir*k); Q.copy(tq).multiply(anim.q0);
+      if(p >= 1){ Q.copy(anim.end); anim = null; }
     }
-    card.rotation.set(D(rx), D(ry), D(rz), 'XYZ');
+    card.quaternion.copy(Q);
     card.scale.setScalar(scale);
     card.position.set(panX, panY, 0);
     physics();
