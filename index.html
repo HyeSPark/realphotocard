@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>유광 포토카드</title>
+<style>
+html,body{margin:0;height:100%;background:#1e120c;overflow:hidden}
+body{background-image:radial-gradient(ellipse 85% 65% at 45% 35%,#4a3022 0%,#1e120c 100%)}
+.stage{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none}
+.stage.live video{display:block}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+</style>
+</head>
+<body>
+<main class="stage" id="stage"><video id="cam" playsinline muted></video></main>
+
+<input type="file" id="frontInput" accept="image/*" aria-label="앞면 사진">
+<input type="file" id="backInput" accept="image/*" aria-label="뒷면 사진">
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script>
+(function(){
+  const stage = document.getElementById('stage');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  } catch(e){
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.physicallyCorrectLights = true;
+  renderer.domElement.tabIndex = 0;
+  renderer.domElement.setAttribute('role', 'button');
+  renderer.domElement.setAttribute('aria-label', '포토카드. 드래그로 기울이고 탭하거나 Enter로 뒤집기');
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+
+  // ---------- studio environment: one large softbox in a warm dark room
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = new THREE.Scene();
+  const basic = (r,g,b) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r,g,b), side: THREE.DoubleSide });
+  const room = new THREE.Mesh(new THREE.BoxGeometry(30,30,30), basic(0.03,0.018,0.012));
+  room.material.side = THREE.BackSide; env.add(room);
+  const softbox = new THREE.Mesh(new THREE.CircleGeometry(0.36, 64), basic(260,248,225));
+  softbox.position.set(-2.2, 2.6, 7.5); softbox.lookAt(0
