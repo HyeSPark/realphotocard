@@ -8,7 +8,9 @@
 html,body{margin:0;height:100%;background:#2c4019;overflow:hidden}
 .stage{position:fixed;inset:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 #lawn{position:absolute;top:-40px;left:-40px;width:calc(100% + 80px);height:calc(100% + 80px);object-fit:cover;filter:blur(10px) saturate(1.05);pointer-events:none}
-.stage.live #lawn{display:none}
+.stage.live #lawn,.stage.photo #lawn{display:none}
+#bgPhoto{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none}
+.stage.photo #bgPhoto{display:block}
 .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none}
 .stage.live video{display:block}
 .stage canvas.gl{position:absolute;inset:0;width:100%;height:100%;display:block;outline:none}
@@ -21,28 +23,38 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;box-shadow:0 20px 50px rgba(0,0,0,.4)}
 .sheet .t{margin:0 0 8px;font-size:1.05rem;font-weight:700}
 .sheet .d{margin:0 0 18px;font-size:.92rem;line-height:1.55;color:#d9d2c4;word-break:keep-all}
-.sheet .b{display:flex;gap:10px}
+.sheet .b{display:grid;gap:8px}
 .sheet button{flex:1;min-height:46px;border-radius:14px;border:0;font:inherit;font-weight:600;font-size:.95rem;cursor:pointer}
 .sheet .no{background:rgba(255,255,255,.1);color:#f4efe6}
 .sheet .yes{background:#f4efe6;color:#1c1e18}
 .sheet button:focus-visible{outline:2px solid #f4efe6;outline-offset:2px}
+@keyframes flash{from{opacity:.85}to{opacity:0}}
+.shutter{position:fixed;z-index:5;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));width:68px;height:68px;margin-left:-34px;
+  border-radius:50%;border:4px solid rgba(255,255,255,.95);background:transparent;padding:5px;cursor:pointer;touch-action:manipulation;
+  box-shadow:0 2px 12px rgba(0,0,0,.25)}
+.shutter span{display:block;width:100%;height:100%;border-radius:50%;background:rgba(255,255,255,.95);transition:transform .12s}
+.shutter:active span{transform:scale(.88)}
+.shutter:focus-visible{outline:2px solid #fff;outline-offset:4px}
+.flash{position:fixed;inset:0;z-index:20;background:#fff;pointer-events:none;animation:flash .35s ease-out forwards}
 </style>
 </head>
 <body>
-<main class="stage" id="stage"><canvas id="lawn" aria-hidden="true"></canvas><video id="cam" playsinline muted></video></main>
+<main class="stage" id="stage"><canvas id="lawn" aria-hidden="true"></canvas><img id="bgPhoto" alt=""><video id="cam" playsinline muted></video></main>
 
 <div class="consent" id="consent" role="dialog" aria-modal="true" aria-labelledby="consentT" hidden>
   <div class="sheet">
     <p class="t" id="consentT"></p>
     <p class="d" id="consentD"></p>
-    <div class="b"><button class="no" id="camNo" type="button"></button><button class="yes" id="camYes" type="button">카메라 켜기</button></div>
+    <div class="b"><button class="yes" id="photoYes" type="button">사진 고르기</button><button class="no" id="camYes" type="button">카메라 켜기</button><button class="no" id="camNo" type="button"></button></div>
   </div>
 </div>
 
+<button class="shutter" id="shutter" type="button" aria-label="사진 찍기"><span></span></button>
 <input type="file" id="frontInput" accept="image/*" aria-label="앞면 사진">
 <input type="file" id="backInput" accept="image/*" aria-label="뒷면 사진">
+<input type="file" id="bgInput" accept="image/*" aria-label="배경 사진">
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js" integrity="sha384-RRHfJ6w1mTlKUBMYT/hvnRiOzEB/vyRV3DrQOseb6oYfvaZSfdd0byS4bHps0k2R" crossorigin="anonymous"></script>
 <script>
 (function(){
   const stage = document.getElementById('stage');
@@ -120,7 +132,20 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   const lawnTex = new THREE.CanvasTexture(lawnCanvas); lawnTex.encoding = THREE.sRGBEncoding;
   // whatever is behind the card (lawn, or the live camera) is also what the gloss faintly reflects
   const reflMat = new THREE.MeshBasicMaterial({ map: lawnTex, side: THREE.DoubleSide });
-  reflMat.color.setScalar(2.2);
+  // the backdrop also lights the card, so its brightness is evened out: a sunny photo and a dim
+  // room both light the card about as much as the lawn does, instead of a bright photo blowing it out
+  const lumCanvas = document.createElement('canvas'); lumCanvas.width = lumCanvas.height = 16;
+  const lumCtx = lumCanvas.getContext('2d', { willReadFrequently: true });
+  const toLin = v => { v /= 255; return v <= 0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4); };
+  function meanLinear(src){
+    try { lumCtx.drawImage(src, 0, 0, 16, 16); } catch(e){ return 0.12; }
+    const d = lumCtx.getImageData(0, 0, 16, 16).data; let sum = 0;
+    for(let i=0;i<d.length;i+=4) sum += 0.2126*toLin(d[i]) + 0.7152*toLin(d[i+1]) + 0.0722*toLin(d[i+2]);
+    return Math.max(0.005, sum/(d.length/4));
+  }
+  const REFL_TARGET = 0.26;
+  function normalizeRefl(src){ reflMat.color.setScalar(Math.min(2.5, Math.max(0.15, REFL_TARGET/meanLinear(src)))); }
+  normalizeRefl(lawnCanvas);
   const reflPlane = new THREE.Mesh(new THREE.PlaneGeometry(26, 18), reflMat);
   reflPlane.position.set(0, 0, 13); reflPlane.lookAt(0, 0, 0); env.add(reflPlane);
   rebuildEnv();
@@ -249,7 +274,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   function faceMat(){
     return addBend(new THREE.MeshPhysicalMaterial({
       color: 0xffffff, roughness: 0.6, metalness: 0,
-      emissive: 0xffffff, emissiveIntensity: 0.74,
+      emissive: 0xffffff, emissiveIntensity: 0.38,  // leaves headroom so whites shade instead of clipping
       clearcoat: 1, clearcoatRoughness: 0.03,
       clearcoatNormalMap: peel, clearcoatNormalScale: new THREE.Vector2(0.06, 0.06),
       iridescence: 0, iridescenceIOR: 1.35, iridescenceThicknessRange: [180, 650]
@@ -262,6 +287,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   const frontMat = faceMat(), backMat = faceMat();
   card.add(new THREE.Mesh(faceGeo(false), frontMat));
   card.add(new THREE.Mesh(faceGeo(true), backMat));
+
 
   // ---------- face artwork (canvas)
   const CW = 1100, CH = 1700;
@@ -336,18 +362,59 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
   const camYes = document.getElementById('camYes'), camNo = document.getElementById('camNo');
   let camTex = null, envTick = 0;
   function openConsent(){
-    consentT.textContent = '카메라를 배경으로 쓸까요?';
-    consentD.textContent = '카메라 화면은 어디에도 전송되거나 저장되지 않아요. 지금 이 브라우저 안에서만 보이고, 창을 닫으면 사라져요.';
-    camYes.hidden = false; camNo.textContent = '취소';
-    consent.hidden = false; camYes.focus();
+    consentT.textContent = '배경 바꾸기';
+    consentD.textContent = '고른 사진이나 카메라 화면은 어디에도 전송되거나 저장되지 않아요. 이 브라우저 안에서만 보이고, 창을 닫으면 사라져요.';
+    camYes.hidden = false; photoYes.hidden = false; camNo.textContent = '취소';
+    consent.hidden = false; photoYes.focus();
   }
   function consentError(text){
     consentT.textContent = '카메라를 켤 수 없어요';
     consentD.textContent = text;
-    camYes.hidden = true; camNo.textContent = '닫기'; camNo.focus();
+    camYes.hidden = true; camNo.textContent = '닫기'; photoYes.focus();
   }
   camNo.addEventListener('click', () => { consent.hidden = true; });
+
+  // photo background: shown behind the card and faintly reflected in the gloss, like the camera
+  const photoYes = document.getElementById('photoYes'), bgInput = document.getElementById('bgInput');
+  const bgPhoto = document.getElementById('bgPhoto');
+  let photoTex = null;
+  function stopCam(){
+    if(camVideo.srcObject){ camVideo.srcObject.getTracks().forEach(t => t.stop()); camVideo.srcObject = null; }
+    if(camTex){ camTex.dispose(); camTex = null; }
+    stage.classList.remove('live');
+  }
+  function clearPhoto(){
+    if(photoTex){ photoTex.dispose(); photoTex = null; }
+    if(bgPhoto.dataset.url){ URL.revokeObjectURL(bgPhoto.dataset.url); delete bgPhoto.dataset.url; }
+    bgPhoto.removeAttribute('src'); stage.classList.remove('photo');
+  }
+  photoYes.addEventListener('click', () => { consent.hidden = true; bgInput.click(); });
+  bgInput.addEventListener('change', e => {
+    const f = e.target.files[0]; e.target.value = '';
+    if(!f || !f.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = () => usePhotoBg(img, url, true);
+    img.src = url;
+  });
+  function usePhotoBg(img, src, ownUrl){
+    stopCam(); clearPhoto();
+    if(ownUrl) bgPhoto.dataset.url = src;
+    bgPhoto.src = src; stage.classList.add('photo');
+    photoTex = new THREE.Texture(img); photoTex.encoding = THREE.sRGBEncoding; photoTex.needsUpdate = true;
+    reflMat.map = photoTex; reflMat.needsUpdate = true; normalizeRefl(img);
+    rebuildEnv();
+  }
+  // default backdrop: a photo shipped with the site (the drawn lawn stays as the fallback)
+  const DEFAULT_BG = 'bg.jpg';
+  (() => {
+    const img = new Image();
+    img.onload = () => { if(!stage.classList.contains('live') && !stage.classList.contains('photo')) usePhotoBg(img, DEFAULT_BG, false); };
+    img.src = DEFAULT_BG;
+  })();
   camYes.addEventListener('click', async () => {
+    if(window.self !== window.top){
+      consentError('이 미리보기 화면에서는 카메라가 막혀 있어요. 배포한 주소(Vercel)에서 열면 켜져요.'); return;
+    }
     if(!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       consentError('카메라는 https 주소로 연 페이지에서만 쓸 수 있어요.'); return;
     }
@@ -361,11 +428,12 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
       return;
     }
     consent.hidden = true;
+    stopCam(); clearPhoto();
     camVideo.srcObject = stream;
     try { await camVideo.play(); } catch(e){}
     stage.classList.add('live');
     camTex = new THREE.VideoTexture(camVideo); camTex.encoding = THREE.sRGBEncoding;
-    reflMat.map = camTex; reflMat.needsUpdate = true;
+    reflMat.map = camTex; reflMat.needsUpdate = true; normalizeRefl(camVideo);
     rebuildEnv();
   });
 
@@ -393,7 +461,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     const r = renderer.domElement.getBoundingClientRect();
     ndc.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
     ray.setFromCamera(ndc, camera);
-    return ray.intersectObject(card, true).length > 0;
+    const hits = ray.intersectObject(card, true).filter(h => h.object.visible && h.object.parent.visible);
+    return hits.length ? hits[0].object : null;
   }
 
   stage.addEventListener('pointerdown', e => {
@@ -401,7 +470,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     anim = null;
     if(pointers.size === 1){
-      drag = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), moved: 0, onCard: hitsCard(e) };
+      const hit = hitsCard(e);
+      drag = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), moved: 0, onCard: !!hit };
     } else if(pointers.size === 2){
       const [a,b] = pair();
       pinch = { d: Math.max(1, Math.hypot(a.x-b.x, a.y-b.y)), s: scale, mx: (a.x+b.x)/2, my: (a.y+b.y)/2, px: panX, py: panY, ang: Math.atan2(b.y-a.y, b.x-a.x) }; drag = null;
@@ -445,7 +515,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
           const back = showingBack(), input = back ? backInput : frontInput, filled = back ? hasBack : hasFront;
           if(held >= 550) input.click();
           else if(held < 260){ if(!filled) input.click(); else flip(1); }
-        } else if(held < 400 && !camTex){
+        } else if(held < 400){
           openConsent();
         }
       }
@@ -463,13 +533,64 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     if(e.key === '-') scale = clamp(scale/1.15, 0.5, 3.5);
   });
 
+  // ---------- shutter: background + card, composed into one image at screen resolution
+  const shutter = document.getElementById('shutter');
+  function drawCoverTo(ctx, src, sw, sh, w, h){
+    const k = Math.max(w/sw, h/sh), dw = sw*k, dh = sh*k;
+    ctx.drawImage(src, (w-dw)/2, (h-dh)/2, dw, dh);
+  }
+  function capture(){
+    const gl = renderer.domElement, w = gl.width, h = gl.height;
+    const out = document.createElement('canvas'); out.width = w; out.height = h;
+    const ctx = out.getContext('2d');
+    if(stage.classList.contains('live') && camVideo.videoWidth){
+      drawCoverTo(ctx, camVideo, camVideo.videoWidth, camVideo.videoHeight, w, h);
+    } else if(stage.classList.contains('photo') && bgPhoto.naturalWidth){
+      drawCoverTo(ctx, bgPhoto, bgPhoto.naturalWidth, bgPhoto.naturalHeight, w, h);
+    } else {
+      // the lawn is blurred on screen with CSS; shrink-then-stretch gives the same soft look
+      const small = document.createElement('canvas'); small.width = Math.max(8, Math.round(w/14)); small.height = Math.max(8, Math.round(h/14));
+      const sctx = small.getContext('2d'); sctx.imageSmoothingQuality = 'high';
+      drawCoverTo(sctx, lawnCanvas, lawnCanvas.width, lawnCanvas.height, small.width, small.height);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(small, -w*0.03, -h*0.03, w*1.06, h*1.06);
+    }
+    renderer.render(scene, camera);           // draw the card now so the frame is still there to copy
+    ctx.drawImage(gl, 0, 0, w, h);
+    return new Promise(res => out.toBlob(res, 'image/jpeg', 0.93));
+  }
+  function stamp(){
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+  async function saveShot(blob){
+    const filename = `photocard-${stamp()}.jpg`;
+    // inside Claude: the page asks the viewer to save; on your own site: share sheet, then plain download
+    const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+    if(dl){ try { await dl.save({ filename, data: blob }); } catch(e){} return; }
+    const file = new File([blob], filename, { type: 'image/jpeg' });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){
+      try { await navigator.share({ files: [file] }); return; } catch(e){ if(e && e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  shutter.addEventListener('click', async () => {
+    const blob = await capture();
+    const f = document.createElement('div'); f.className = 'flash'; document.body.appendChild(f);
+    setTimeout(() => f.remove(), 400);
+    if(blob) saveShot(blob);
+  });
+
   // ---------- sizing + loop
   function resize(){
     const w = stage.clientWidth, h = stage.clientHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w/h;
     const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
-    camera.position.set(0, 0, Math.max((H*1.22/2)/tan, (W*1.35/2)/(tan*camera.aspect)));
+    const fh = H*1.22, fw = W*1.35;
+    camera.position.set(0, 0, Math.max((fh/2)/tan, (fw/2)/(tan*camera.aspect)));
     camera.lookAt(0,0,0);
     camera.updateProjectionMatrix();
   }
@@ -496,7 +617,8 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     const ax = reduce ? 0 : clamp((wx-owx)/dt, -2500, 2500);
     const ay = reduce ? 0 : clamp((wy-owy)/dt, -2500, 2500);
     qInv.copy(card.quaternion).invert(); gL.copy(G).applyQuaternion(qInv);
-    const F = [K*gL.z*SAG*0.3, K*gL.z*SAG, ay*LAG, -ax*LAG];
+    const sag = SAG;
+    const F = [K*gL.z*sag*0.3, K*gL.z*sag, ay*LAG, -ax*LAG];
     for(let i=0;i<4;i++){
       bv[i] += (F[i] - K*bb[i] - C*bv[i])*dt;
       bb[i] += bv[i]*dt;
@@ -515,7 +637,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     card.scale.setScalar(scale);
     card.position.set(panX, panY, 0);
     physics();
-    if(camTex && (++envTick % 6 === 0)) rebuildEnv();
+    if(camTex && (++envTick % 6 === 0)){ normalizeRefl(camVideo); rebuildEnv(); }
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }
