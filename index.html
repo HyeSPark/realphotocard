@@ -420,7 +420,7 @@ input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+            stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: false });
     } catch(err){
       consentError(err && err.name === 'NotAllowedError'
         ? '카메라 권한이 거부됐어요. Safari 주소창 왼쪽 메뉴의 웹사이트 설정에서 카메라를 허용한 뒤 새로고침해 주세요.'
